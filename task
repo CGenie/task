@@ -1,0 +1,475 @@
+#!/usr/bin/env python2.7
+"""
+    Simple task manager (implemented as a FILO stack). Usage:
+    task add                    adds a new task (and also makes it the current
+                                one)
+    task [current]              print the current task
+    task done                   set current task as done (and move it to
+                                history)  
+    task edit [num]             edit task number <num> (or current task if num
+                                not specified)
+    task history [-c category] [-y [num]] [-m [num]] [-w [num]]
+                                print historical tasks (with an optional date
+                                range and an optional category)
+    task list [-c category]     list of tasks (can be in a specific category)
+    task pop [num] [-h]         pop the most recent task (i.e. with lowest num)
+                                or remove task with number <num> (optionally
+                                pop a task from history)
+    task push                   push current task back onto the stack
+
+    Task file structure is the following:
+
+    [desc]
+    [desc]                           (task description)
+    ...
+    [desc]
+    ########                         (8 hashes)
+    [timestamp]
+    [timestamp]                      (start and stop time history)
+    ...
+    [timestamp]
+
+    Task filenames are of form: xxxxxxxx (8 digits) and are increased every
+    time a task is added to stack.
+"""
+
+# TODO:
+# - implement year, day, make month display only for current year
+# - when task done, user should be able to edit it first before moving to
+#   history
+
+import os
+import sys
+import shutil
+# Python 2.7 or higher
+import argparse
+from datetime import datetime, timedelta, date
+from dateutil import parser as dparser
+
+# settings begin
+
+DIR_PREFIX = os.getenv('HOME')
+TASKS_DIR = os.path.join(DIR_PREFIX, '.task')
+ACTIVE_DIR = os.path.join(TASKS_DIR, 'active/')
+HISTORY_DIR = os.path.join(TASKS_DIR, 'history/')
+
+# settings end
+
+CURRENT_FILE = '%s/current' % TASKS_DIR
+
+class ImplementationError(object):
+    pass
+
+class Task(object):
+    def __init__(self, description = '', timeline = []):
+        self.description = description
+        self.timeline = timeline
+
+    def parse_from_file(self, fname):
+        self.description = []
+        self.timeline = []
+        is_timeline = False
+
+        f = open(fname)
+
+        for l in f:
+            if l == ('#'*8 + "\n"):
+                is_timeline = True
+            else:
+                if not is_timeline:
+                    self.description.append(l)
+                else:
+                    self.timeline.append(dparser.parse(l))
+        
+        f.close()
+
+    def calculate_total_time(self):
+        """Calculate total time based on task's timeline.
+        Timestamp is a series of star/stop datetimes.
+        """
+        td = timedelta(0, 0, 0)
+        for i in range(len(self.timeline)/2):
+            td += self.timeline[2*i + 1] - self.timeline[2*i]
+        if len(self.timeline) % 2 == 1:
+            td += datetime.now() - self.timeline[-1]
+        return td
+
+    def get_category(self):
+        """Parse self.description[0] and return the category
+        """
+        cat = self.description[0].split(' ')[0].lower()
+        if cat[-1] == ':':
+            cat = cat[:-1]
+        return cat
+
+    def save(self, task_type = 'active', fname = None):
+        if task_type == 'active':
+            save_dir = ACTIVE_DIR
+        elif task_type == 'history':
+            save_dir = HISTORY_DIR
+        else:
+            print 'Task type incorrect!'
+            raise ImplementationError
+
+        if not fname:
+            fname = get_free_task_fname()
+        f = open(os.path.join(save_dir, fname), 'w')
+        for l in self.description:
+            f.write(l.strip() + "\n")
+        f.write('#'*8 + "\n")
+        for t in self.timeline:
+            f.write(t.isoformat() + "\n")
+        f.close()
+        self.fname = fname
+
+    def __str__(self):
+        return '% 28s% 28s% 16s  %s' % (self.timeline[0].isoformat(),
+                self.timeline[-1].isoformat(), str(self.calculate_total_time()),
+                self.description[0].strip())
+
+def initialize():
+    # create the directory structure if it doesn't exist
+    for directory in (TASKS_DIR, ACTIVE_DIR, HISTORY_DIR):
+        if not os.path.exists(directory):
+            print 'Creating directory %s' % directory
+            os.mkdir(directory)
+    # renumber the tasks if necessary, preserving their current order
+    # first get all historical tasks and line them up nicely
+    history_dir_list = os.listdir(HISTORY_DIR)
+    if not history_dir_list == []:
+        history_dir_list.sort()
+        tlist = []
+        for fname in history_dir_list:
+            tlist.append(Task())
+            tlist[-1].parse_from_file(os.path.join(HISTORY_DIR, fname))
+            os.remove(os.path.join(HISTORY_DIR, fname))
+        for t in tlist:
+            fname = str(int(get_highest_task(task_type = 'history')) + 1).zfill(8)
+            t.save(task_type = 'history', fname = fname)
+    # now we can renumerate active tasks
+    active_dir_list = os.listdir(ACTIVE_DIR)
+    if not active_dir_list == []:
+        active_dir_list.sort()
+        tlist = []
+        for fname in active_dir_list:
+            tlist.append(Task())
+            tlist[-1].parse_from_file(os.path.join(ACTIVE_DIR, fname))
+            os.remove(os.path.join(ACTIVE_DIR, fname))
+        for t in tlist:
+            fname = str(int(get_highest_task(task_type = 'active')) + 1).zfill(8)
+            t.save(task_type = 'active', fname = fname)
+
+def string_pretty_trim(ss, length):
+    """Trims the string so that it contains ... on the end if it was too long.
+    """
+    if len(ss) < length - 3:
+        return ss
+    return ss[0:length - 3] + "..."
+
+def get_current_task():
+    """Returns the current task as a Task class or None if doesn't exist.
+    """
+    try:
+        task = Task()
+        task.parse_from_file(CURRENT_FILE)
+        return task
+    except IOError:
+        return None
+
+def get_highest_task(task_type = 'active'):
+    """Return task with highest priority of type task_type.
+    """
+    if task_type == 'active':
+        directory = ACTIVE_DIR
+    elif task_type == 'history':
+        directory = HISTORY_DIR
+    else:
+        print 'task_type incorrect'
+        sys.exit(1)
+    dir_list = os.listdir(directory)
+    if dir_list == []:
+        return '0'*8
+    dir_list.sort()
+    return dir_list[-1]
+
+def get_free_task_fname():
+    """Returns the first free number for adding a task (the highest of numbers
+    in ACTIVE_DIR and HISTORY_DIR + 1).
+    """
+    f1 = get_highest_task(task_type = 'active')
+    f2 = get_highest_task(task_type = 'history')
+    fname = str(int(max(f1, f2)) + 1).zfill(8)
+    return fname
+
+def print_list(args, task_type = 'active'):
+    """A general printing procedure, to wrap up the similar functionality of
+    task list and task history.
+    """
+    if task_type == 'active':
+        directory = ACTIVE_DIR
+    elif task_type == 'history':
+        directory = HISTORY_DIR
+    else:
+        raise ImplementationError
+    dir_list = os.listdir(directory)
+    if dir_list == []:
+        print 'No tasks'
+        sys.exit(0)
+    dir_list.sort()
+    tt = timedelta(0, 0, 0)
+    category = getattr(args, 'c', None)
+    if category:
+        category = category[0].lower()
+    month = getattr(args, 'm', None)
+    if month:
+        month = month[-1]
+    week = getattr(args, 'w', None)
+    if week:
+        week = int(week)
+    for f in dir_list:
+        c = Task()
+        c.parse_from_file(os.path.join(directory, f))
+        if category == None or c.get_category() == category:
+            if month == None or c.timeline[-1].month == month:
+                more_ss = ''
+                if len(c.description) > 1:
+                    more_ss = ' (MORE)'
+                print '% 4d%s [%d]' % (int(f), string_pretty_trim(str(c), 140) + more_ss, int(f))
+                tt += c.calculate_total_time()
+    if tt == timedelta(0, 0, 0):
+        print 'No tasks'
+        return timedelta(0, 0, 0)
+    else:
+        return tt
+
+def fAdd(args):
+    """This function adds a new task. If current task is present, it is pushed
+    onto the stack first.
+    """
+    if get_current_task() == None:
+        # we can safely add a task and then make it current (pop it from active
+        # tasks)
+        # set a nice text message
+        f = open(CURRENT_FILE, 'w')
+        f.write('Enter your task description here')
+        f.close()
+        # remember file's modification time
+        mod_time1 = os.stat(CURRENT_FILE).st_mtime
+        # launch the user's favorite editor
+        os.system('%s %s' % (os.getenv('EDITOR', 'vim'), CURRENT_FILE))
+        # see if file was edited
+        mod_time2 = os.stat(CURRENT_FILE).st_mtime
+        if mod_time1 == mod_time2:
+            # file unmodified, delete CURRENT_FILE
+            os.remove(CURRENT_FILE)
+            print 'No task added'
+        else:
+            # file modified, we can add a new task
+            # add the timestamp to this file
+            f = open(CURRENT_FILE, 'a')
+            f.write('#'*8 + "\n")
+            f.write(datetime.now().isoformat())
+            f.close()
+            print 'Task added'
+    else:
+        print 'Current task exists, push or finish it first'
+
+def fCurrent(args):
+    task = get_current_task()
+    if task:
+        print 'Current task:'
+        for l in task.description:
+            print l.strip()
+        print 'Total time: %s' % str(task.calculate_total_time())
+    else:
+        print 'Current task not set'
+
+def fDone(args):
+    c = get_current_task()
+    if not c:
+        print 'You need to set a current task first.'
+        sys.exit(1)
+    c.timeline.append(datetime.now())
+    c.save(task_type = 'history')
+    os.remove(CURRENT_FILE)
+
+def fEdit(args):
+    """Edit task with number args.num. If args.num = '-1', edit current
+    task.
+    """
+    c = get_current_task()
+    if not args.num == '-1':
+        # user wants to edit some other task than c
+        if c:
+            print 'Current task exists. Push it onto the stack first.'
+            sys.exit(1)
+        fPop(args)
+    # OK, we have the interesting task now in CURRENT_FILE, we can edit it
+    os.system('%s %s' % (os.getenv('EDITOR', 'vim'), CURRENT_FILE))
+
+def fHistory(args):
+    """Print all tasks in history, in order of appearance.
+    """
+    tt = print_list(args, task_type = 'history')
+    print 'Total time: %s' % str(tt)
+
+def fList(args):
+    """Print the current task, then print the list of active tasks.
+    """
+    ct = get_current_task()
+    # don't bind to a specific month when no option specified (this way we see
+    # a list of all tasks)
+    month = getattr(args, 'm', None)
+    if month and len(month) == 1:
+        setattr(args, 'm', None)
+    tt = print_list(args, task_type = 'active')
+    category = getattr(args, 'c', None)
+    if category:
+        category = category[0].lower()
+    if ct:
+        if category == None or ct.get_category() == category:
+            more_ss = ''
+            if len(ct.description) > 1:
+                more_ss = ' (MORE)'
+            print '*[current]%s' % (string_pretty_trim(str(ct), 130) + more_ss)
+            # add current time for ct
+            tt += ct.calculate_total_time()
+    print 'Total time: %s' % str(tt)
+
+def fPop(args):
+    """Pop task from the stack. Complain if current task is present.
+    """
+    task = get_current_task()
+    if task:
+        print 'Current task set. Finish it or push it.'
+        sys.exit(0)
+    # the default
+    #task_type = 'active'
+    #if 'H' in args:
+    #    task_type = 'history'
+    #if task_type == 'active':
+    #    directory = ACTIVE_DIR
+    #elif task_type == 'history':
+    #    directory = HISTORY_DIR
+    #else:
+    #    print 'Wrong call to fPop'
+    #    sys.exit(1)
+    directory = ACTIVE_DIR
+    if not args.num == '-1':
+        # convert num to a meaningful file name
+        fname = args.num.zfill(8)
+        # check if such a file exists
+        if not os.path.isfile(os.path.join(directory, fname)):
+            print 'Task %s does not exist' % args.num
+            sys.exit(1)
+    else:
+        # pop the latest task from directory
+        fname = get_highest_task(task_type = 'active')
+        if fname == '0'*8:
+            print 'No active tasks'
+            sys.exit(1)
+        
+    # move the active task to be current task
+    shutil.move(os.path.join(directory, fname), CURRENT_FILE)
+    # add the timestamp
+    f = open(CURRENT_FILE, 'a')
+    f.write(datetime.now().isoformat() + "\n")
+    f.close()
+    print 'Task %d popped' % int(fname)
+    sys.exit(0)
+
+def fPush(args):
+    c = get_current_task()
+    if c:
+        # append current time to timeline (stop time)
+        c.timeline.append(datetime.now())
+        c.save()
+        os.remove(CURRENT_FILE)
+        print 'Task pushed to active stack as %d' % int(c.fname)
+    else:
+        print 'Current task not set'
+
+if __name__ == '__main__':
+    initialize()
+
+    now = datetime.now()
+
+    if len(sys.argv) == 1:
+        fCurrent(None)
+        sys.exit(0)
+
+    parser = argparse.ArgumentParser(prog = 'task',
+                    description = 'Simple task manager.')
+
+    subparsers = parser.add_subparsers(help = 'Commands')
+    parser_add = subparsers.add_parser('add', 
+            help = 'Add a new task and make it the current one')
+    parser_add.add_argument('num', action = 'store', default = '-1',
+            nargs = '?', help = 'Get dev.trac ticket num')
+    parser_add.set_defaults(func = fAdd)
+
+    parser_current = subparsers.add_parser('current',
+            help = 'Print info about the current task (default)')
+    parser_current.set_defaults(func = fCurrent)
+
+    parser_done = subparsers.add_parser('done',
+            help = 'Mark current task as done and move it to history')
+    parser_done.set_defaults(func = fDone)
+
+    parser_edit = subparsers.add_parser('edit', 
+            help = 'Edit some specific task')
+    parser_edit.add_argument('num', action = 'store', nargs = '?', 
+            default = '-1',
+            help = 'Number of task to edit (or current task if not specified)')
+    parser_edit.set_defaults(func = fEdit)
+
+    # TODO: date range
+    parser_history = subparsers.add_parser('history',
+            help = 'Show tasks in history')
+    parser_history.add_argument('-c', action = 'store', nargs = 1,
+            help = 'Show tasks from a specific category')
+    parser_history.add_argument('-y', action = 'store', nargs = '?',
+            type = int,
+            help = 'Show tasks from this year only (or specify a year)')
+    parser_history.add_argument('-m', action = 'append', nargs = '?',
+            default = [now.month], type = int,
+            help = 'Show tasks from this month only (or specify a month \
+                    number)')
+    parser_history.add_argument('-w', action = 'store', nargs = '?',
+            help = 'Show tasks from this week only (or specify a week \
+                    number)')
+    parser_history.set_defaults(func = fHistory)
+
+    parser_list = subparsers.add_parser('list', help = 'List all tasks')
+    parser_list.add_argument('-c', action = 'store', nargs = 1,
+            help = 'Show tasks from a specific category')
+    parser_list.add_argument('-y', action = 'store', nargs = '?',
+            type = int,
+            help = 'Show tasks from this year only (or specify a year)')
+    parser_list.add_argument('-m', action = 'append', nargs = '?',
+            default = [now.month], type = int,
+            help = 'Show tasks from this month only (or specify a month \
+                    number)')
+    parser_list.add_argument('-w', action = 'store', nargs = '?',
+            help = 'Show tasks from this week only (or specify a week \
+                    number)')
+    parser_list.add_argument('-d', action = 'store', nargs = '?',
+            help = 'Show tasks from this day only (or specify a day \
+                    number)')
+    parser_list.set_defaults(func = fList)
+
+    parser_pop = subparsers.add_parser('pop',
+            help = 'Pop a task from the stack')
+    parser_pop.add_argument('num', action = 'store', default = '-1',
+            nargs = '?', help = 'Numer of the task to pop')
+    #parser_pop.add_argument('-H', action = 'store', nargs = '?',
+    #        help = 'Pop the task from history')
+    parser_pop.set_defaults(func = fPop)
+
+    parser_push = subparsers.add_parser('push',
+            help = 'Push current task to the active tasks stack')
+    parser_push.set_defaults(func = fPush)
+
+    args = parser.parse_args()
+    args.func(args)
+
