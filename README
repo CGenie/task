@@ -9,12 +9,34 @@ In order to be able to work on the same tasks on multiple computers, I've set
 up $HOME/.task as a link to my Dropbox folder.
 To add a new task do:
 task add
+This will open up your $EDITOR and let you edit the task category and
+description. Currently the category is taken to be the first word of the
+description so that you should preferably format your tasks like this:
+
+Project1: short description
+More detailed description
+
 To see all of active tasks:
 task list
+This displays all active tasks (by default). If you want to see tasks from the
+current week, type:
+task list -w 0
+If you want the week before:
+task list -w 1
+and so on. If you want tasks from a specific month (say September):
+task list -m 9
+from October:
+task list -m 10
+and so on. For tasks from specific year type:
+task list -y 2011
+
 If your task is done do:
 task done
 Then it is moved to history:
 task history
+The date ranges for history are same as for list with the exception that only
+tasks from current week are shown in history by default.
+
 If you have a different task but you're not finished with the current one:
 task push
 to make this task active (but not current) and then either
@@ -22,3 +44,8 @@ task add
 to add a new task or:
 task pop [num]
 to pop task with number [num] (active/history tasks work as a FILO stack).
+
+More info can be found in the source code.
+
+Happy using and please give feedback! :)
+

@@ -201,7 +201,7 @@ def get_free_task_fname():
     fname = str(int(max(f1, f2)) + 1).zfill(8)
     return fname
 
-def print_list(args, task_type = 'active'):
+def print_list(args, task_type = 'active', default_date_range = 'all'):
     """A general printing procedure, to wrap up the similar functionality of
     task list and task history.
     """
@@ -216,21 +216,51 @@ def print_list(args, task_type = 'active'):
         print 'No tasks'
         sys.exit(0)
     dir_list.sort()
+
     tt = timedelta(0, 0, 0)
+    now = datetime.now()
+
     category = getattr(args, 'c', None)
     if category:
         category = category[0].lower()
+    year = getattr(args, 'y', None)
     month = getattr(args, 'm', None)
-    if month:
-        month = month[-1]
     week = getattr(args, 'w', None)
-    if week:
-        week = int(week)
+
+    if default_date_range == 'week' and week == None:
+        week = 0
+    
+    # display all tasks by default
+    date_from = datetime(1979, 1, 1, 0, 0, 0)
+    date_to = now
+
+    # compute the date ranges
+    if year:
+        date_from = datetime(year, 1, 1, 0, 0, 0)
+        date_to = now
+    elif month:
+        date_from = datetime(now.year, month, 1, 0, 0, 0)
+        date_to = datetime(now.year, month + 1, 1, 0, 0)
+    elif not week == None:
+        if week == 0:
+            # default is display current week
+            w = now.isocalendar()[1]
+        else:
+            # otherwise we want to show a number of weeks before the current
+            # one
+            w = now.isocalendar()[1] - week
+        # get the days for this week, starting from Monday of a specified week
+        weekdelta = timedelta(days = w*7)
+        date_from = datetime(now.year, 1, 1, 0, 0, 0) + weekdelta - timedelta(days = now.weekday())
+        date_to = date_from + timedelta(days = 7)
+
+    print 'Date range: %s -- %s' % (date_from.isoformat(), date_to.isoformat())
     for f in dir_list:
         c = Task()
         c.parse_from_file(os.path.join(directory, f))
         if category == None or c.get_category() == category:
-            if month == None or c.timeline[-1].month == month:
+            #if month == None or c.timeline[-1].month == month:
+            if c.timeline[-1] >= date_from and c.timeline[-1] <= date_to:
                 more_ss = ''
                 if len(c.description) > 1:
                     more_ss = ' (MORE)'
@@ -308,21 +338,18 @@ def fEdit(args):
     os.system('%s %s' % (os.getenv('EDITOR', 'vim'), CURRENT_FILE))
 
 def fHistory(args):
-    """Print all tasks in history, in order of appearance.
+    """Print tasks in history, in order of appearance.
+    Default is to print history of this week's tasks.
     """
-    tt = print_list(args, task_type = 'history')
+    tt = print_list(args, task_type = 'history', default_date_range = 'week')
     print 'Total time: %s' % str(tt)
 
 def fList(args):
-    """Print the current task, then print the list of active tasks.
+    """Print the list of active tasks and then the current task.
+    Default is to print all the active tasks.
     """
     ct = get_current_task()
-    # don't bind to a specific month when no option specified (this way we see
-    # a list of all tasks)
-    month = getattr(args, 'm', None)
-    if month and len(month) == 1:
-        setattr(args, 'm', None)
-    tt = print_list(args, task_type = 'active')
+    tt = print_list(args, task_type = 'active', default_date_range = 'all')
     category = getattr(args, 'c', None)
     if category:
         category = category[0].lower()
@@ -409,7 +436,7 @@ if __name__ == '__main__':
     parser_add.set_defaults(func = fAdd)
 
     parser_current = subparsers.add_parser('current',
-            help = 'Print info about the current task (default)')
+            help = 'Print info about the current task [default]')
     parser_current.set_defaults(func = fCurrent)
 
     parser_done = subparsers.add_parser('done',
@@ -431,13 +458,14 @@ if __name__ == '__main__':
     parser_history.add_argument('-y', action = 'store', nargs = '?',
             type = int,
             help = 'Show tasks from this year only (or specify a year)')
-    parser_history.add_argument('-m', action = 'append', nargs = '?',
-            default = [now.month], type = int,
+    parser_history.add_argument('-m', action = 'store', nargs = '?',
+            type = int,
             help = 'Show tasks from this month only (or specify a month \
                     number)')
     parser_history.add_argument('-w', action = 'store', nargs = '?',
-            help = 'Show tasks from this week only (or specify a week \
-                    number)')
+            default = None, type = int,
+            help = 'Show tasks from this week only (or specify number of \
+                    weeks before this one) [default]')
     parser_history.set_defaults(func = fHistory)
 
     parser_list = subparsers.add_parser('list', help = 'List all tasks')
@@ -446,13 +474,14 @@ if __name__ == '__main__':
     parser_list.add_argument('-y', action = 'store', nargs = '?',
             type = int,
             help = 'Show tasks from this year only (or specify a year)')
-    parser_list.add_argument('-m', action = 'append', nargs = '?',
-            default = [now.month], type = int,
+    parser_list.add_argument('-m', action = 'store', nargs = '?',
+            type = int,
             help = 'Show tasks from this month only (or specify a month \
                     number)')
     parser_list.add_argument('-w', action = 'store', nargs = '?',
-            help = 'Show tasks from this week only (or specify a week \
-                    number)')
+            default = None, type = int,
+            help = 'Show tasks from this week only (or specify number of \
+                    weeks before this one)')
     parser_list.add_argument('-d', action = 'store', nargs = '?',
             help = 'Show tasks from this day only (or specify a day \
                     number)')
