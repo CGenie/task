@@ -1,0 +1,24 @@
+This is a simple Python script which lets me keep track of my tasks and their
+time. It helps me a lot in my work with the ticketing system so I can see
+precisely how much time it took for specific tasks.
+
+It is not finished yet, but it is usable. It's tested on Linux.  After the
+first run the script sets up its directories in $HOME/.task.
+
+In order to be able to work on the same tasks on multiple computers, I've set
+up $HOME/.task as a link to my Dropbox folder.
+To add a new task do:
+task add
+To see all of active tasks:
+task list
+If your task is done do:
+task done
+Then it is moved to history:
+task history
+If you have a different task but you're not finished with the current one:
+task push
+to make this task active (but not current) and then either
+task add
+to add a new task or:
+task pop [num]
+to pop task with number [num] (active/history tasks work as a FILO stack).
