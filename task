@@ -4,6 +4,8 @@
     task add                    adds a new task (and also makes it the current
                                 one)
     task [current]              print the current task
+    task display [-A|-H] [num]  display info about task number [num] (Active
+                                or History), default is current task
     task done                   set current task as done (and move it to
                                 history)  
     task edit [num]             edit task number <num> (or current task if num
@@ -251,7 +253,7 @@ def print_list(args, task_type = 'active', default_date_range = 'all'):
             w = now.isocalendar()[1] - week
         # get the days for this week, starting from Monday of a specified week
         weekdelta = timedelta(days = w*7)
-        date_from = datetime(now.year, 1, 1, 0, 0, 0) + weekdelta - timedelta(days = now.weekday())
+        date_from = datetime(now.year, 1, 1, 0, 0, 0) + weekdelta - timedelta(date(now.year, 1, 1).weekday())
         date_to = date_from + timedelta(days = 7)
 
     print 'Date range: %s -- %s' % (date_from.isoformat(), date_to.isoformat())
@@ -305,6 +307,7 @@ def fAdd(args):
         print 'Current task exists, push or finish it first'
 
 def fCurrent(args):
+    # TODO: this should call fDisplay to maximize code reuse
     task = get_current_task()
     if task:
         print 'Current task:'
@@ -313,6 +316,24 @@ def fCurrent(args):
         print 'Total time: %s' % str(task.calculate_total_time())
     else:
         print 'Current task not set'
+
+def fDisplay(args):
+    directory = ACTIVE_DIR
+    if getattr(args, 'H', None):
+        directory = HISTORY_DIR
+    task_num = getattr(args, 'num', None)
+    if int(task_num) == 0:
+        task = get_current_task()
+        if not task:
+            print 'No current task'
+            sys.exit(1)
+    else:
+        fname = os.path.join(directory, task_num.zfill(8))
+        task = Task()
+        task.parse_from_file(fname)
+    for line in task.description:
+        print line.strip()
+    print 'Total time: %s' % str(task.calculate_total_time())
 
 def fDone(args):
     c = get_current_task()
@@ -438,6 +459,17 @@ if __name__ == '__main__':
     parser_current = subparsers.add_parser('current',
             help = 'Print info about the current task [default]')
     parser_current.set_defaults(func = fCurrent)
+
+    parser_display = subparsers.add_parser('display',
+            help = 'Display full info about some task')
+    parser_display.add_argument('num', action = 'store', nargs = '?',
+            default = '0',
+            help = 'Number of task to display (or current task if not specified)')
+    parser_display.add_argument('-A', action = 'store_true',
+            help = 'Display task from Active tasks (default)')
+    parser_display.add_argument('-H', action = 'store_true',
+            help = 'Display task from History tasks')
+    parser_display.set_defaults(func = fDisplay)
 
     parser_done = subparsers.add_parser('done',
             help = 'Mark current task as done and move it to history')
