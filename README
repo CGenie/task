@@ -45,6 +45,12 @@ to add a new task or:
 task pop [num]
 to pop task with number [num] (active/history tasks work as a FILO stack).
 
+To display some task in detail type
+task display -[A|H] [num]
+where [num] is the number of the task (-A and -H switches are for selecting
+active/history tasks). If [num] is not specified, display current task in
+detail.
+
 More info can be found in the source code.
 
 Happy using and please give feedback! :)
